@@ -2,18 +2,31 @@
 
 
 #include "SVAnimNotifyState_Trace.h"
+
+#include "KismetTraceUtils.h"
 #include "SVAnimAvatar.h"
 #include "SVSharedAnimTrace.h"
 #include "Engine/AssetManager.h"
+#include "AnimationEditorPreviewActor.h"
 
 void USVAnimNotifyState_Trace::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 
-	Avatar = MeshComp->GetOwner();
-	for (FInstancedStruct& TraceData: Traces)
+	if (IsValid(MeshComp))
 	{
-		DoTrace(MeshComp, TraceData);
+		Avatar = MeshComp->GetOwner();
+		CurrentMeshComp = MeshComp;
+		for (FInstancedStruct& TraceData: Traces)
+		{
+			CalcTrace(MeshComp, TraceData);
+		}
+#if WITH_EDITORONLY_DATA
+		if (Avatar->IsA<AAnimationEditorPreviewActor>() && bAlwaysDrawInPersona)
+		{
+			DrawTracesInPersona();
+		}
+#endif 
 	}
 }
 
@@ -22,7 +35,7 @@ void USVAnimNotifyState_Trace::NotifyTick(USkeletalMeshComponent* MeshComp, UAni
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
 	for (FInstancedStruct& TraceData: Traces)
 	{
-		DoTrace(MeshComp, TraceData);
+		CalcTrace(MeshComp, TraceData);
 	}
 }
 
@@ -62,7 +75,7 @@ void USVAnimNotifyState_Trace::CalculateRelativeTransform(const USkeletalMeshCom
 	}
 }
 
-void USVAnimNotifyState_Trace::DoTrace(const USkeletalMeshComponent* MeshComp, FInstancedStruct& TraceData)
+void USVAnimNotifyState_Trace::CalcTrace(const USkeletalMeshComponent* MeshComp, FInstancedStruct& TraceData, bool bDoTrace)
 {
 	//unpack shared shapes and do their traces
 	if (TraceData.GetScriptStruct() == FSVSharedAnimTraceReference::StaticStruct())
@@ -74,7 +87,7 @@ void USVAnimNotifyState_Trace::DoTrace(const USkeletalMeshComponent* MeshComp, F
 			{
 				for (FInstancedStruct InnerTrace : Shared->Traces)
 				{
-					DoTrace(MeshComp, InnerTrace);
+					CalcTrace(MeshComp, InnerTrace, bDoTrace);
 				}
 			}
 			
@@ -104,7 +117,7 @@ void USVAnimNotifyState_Trace::DoTrace(const USkeletalMeshComponent* MeshComp, F
 			CalculateRelativeTransform(MeshComp, Sphere.SocketName, Sphere.bRelativeToSocket, Sphere.RelativeTransform, Start, Rot);
 			//end = start;
 			End = Start;
-#if !(UE_BUILD_TEST || UE_BUILD_SHIPPING)
+#if ENABLE_DRAW_DEBUG 
 			if (bDrawDebug)
 			{
 				DrawDebugSphere(World, Start, Sphere.Radius, 12, DrawColor);
@@ -121,10 +134,10 @@ void USVAnimNotifyState_Trace::DoTrace(const USkeletalMeshComponent* MeshComp, F
 			// set start and rot
 			CalculateRelativeTransform(MeshComp, Box.SocketName, Box.bRelativeToSocket, Box.RelativeTransform, Start, Rot);
 			End = Start;
-#if !(UE_BUILD_TEST || UE_BUILD_SHIPPING)
+#if ENABLE_DRAW_DEBUG 
 			if (bDrawDebug)
 			{
-				DrawDebugBox(World, Start, Box.HalfExtents, DrawColor);
+				DrawDebugSweptBox(World, Start, End, Rot.Rotator(), Box.HalfExtents, DrawColor);
 			}
 #endif
 		}
@@ -137,24 +150,42 @@ void USVAnimNotifyState_Trace::DoTrace(const USkeletalMeshComponent* MeshComp, F
 			//set start and rot
 			CalculateRelativeTransform(MeshComp, Capsule.SocketName, Capsule.bRelativeToSocket, Capsule.RelativeTransform, Start, Rot);
 			End = Start;
-#if !(UE_BUILD_TEST || UE_BUILD_SHIPPING)
+#if ENABLE_DRAW_DEBUG 
 			if (bDrawDebug)
 			{
 				DrawDebugCapsule(World, Start, Capsule.HalfHeight, Capsule.Radius, Rot, DrawColor);
 			}
 #endif
 		}
-		World->SweepMultiByChannel(Results, Start, End, Rot, Channel, Shape, QueryParams);
-		for (FHitResult& Hit: Results)
+		if (bDoTrace)
 		{
-			if (bTriggerRepeatedly || !HitActors.Contains(Hit.GetActor()))
+			World->SweepMultiByChannel(Results, Start, End, Rot, Channel, Shape, QueryParams);
+			for (FHitResult& Hit: Results)
 			{
-				TryEmitHit(Hit);
-				HitActors.Add(Hit.GetActor());
+				if (bTriggerRepeatedly || !HitActors.Contains(Hit.GetActor()))
+				{
+					TryEmitHit(Hit);
+					HitActors.Add(Hit.GetActor());
+				}
 			}
 		}
 	}
 
+}
+
+void USVAnimNotifyState_Trace::DrawTracesInPersona()
+{
+	if (CurrentMeshComp.IsValid())
+	{
+		for (FInstancedStruct& TraceData: Traces)
+		{
+			CalcTrace(CurrentMeshComp.Get(), TraceData, false);
+		}
+		if (bAlwaysDrawInPersona)
+		{
+			CurrentMeshComp->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &USVAnimNotifyState_Trace::DrawTracesInPersona);
+		}
+	}
 }
 
 void USVAnimNotifyState_Trace::TryEmitHit(const FHitResult& Hit) const
@@ -164,3 +195,18 @@ void USVAnimNotifyState_Trace::TryEmitHit(const FHitResult& Hit) const
 		ISVAnimAvatar::Execute_HandleAnimTraceHit(Avatar.Get(), Hit, Tags, DataId);
 	}
 }
+
+#if WITH_EDITOR
+void USVAnimNotifyState_Trace::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(USVAnimNotifyState_Trace, bAlwaysDrawInPersona))
+	{
+		if (bAlwaysDrawInPersona)
+		{
+			DrawTracesInPersona();
+		}
+	}
+}
+#endif
+

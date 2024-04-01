@@ -38,6 +38,7 @@ public class SVAnimData : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+				"Persona",
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

@@ -20,6 +20,9 @@ public:
 	UPROPERTY()
 	TWeakObjectPtr<AActor> Avatar;
 
+	UPROPERTY()
+	TWeakObjectPtr<USkeletalMeshComponent> CurrentMeshComp;
+
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, meta = (BaseStruct = "/Script/SVAnimData.SVAnimTrace", ExcludeBaseStruct), Category="SVAnimData")
 	TArray<FInstancedStruct> Traces;
 
@@ -37,6 +40,9 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="SVAnimData | Debug")
 	FColor DrawColor = FColor::Red;
 
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="SVAnimData | Debug", meta = (ToolTip = "Use to visualize within montages!"))
+	bool bAlwaysDrawInPersona = false;
+
 	virtual void NotifyBegin(class USkeletalMeshComponent * MeshComp, class UAnimSequenceBase * Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyEnd(class USkeletalMeshComponent * MeshComp, class UAnimSequenceBase * Animation, const FAnimNotifyEventReference& EventReference) override;
@@ -46,8 +52,15 @@ public:
 	void CalculateRelativeTransform(const USkeletalMeshComponent* MeshComp, const FName& SocketName, bool bRelativeToSocket, const FTransform& RelativeTransform, FVector& OutLocation, FQuat& OutRotation) const;
 
 	UFUNCTION()
-	void DoTrace(const USkeletalMeshComponent* MeshComp, FInstancedStruct& TraceData);
+	void CalcTrace(const USkeletalMeshComponent* MeshComp, FInstancedStruct& TraceData, bool bDoTrace = true);
 
 	UFUNCTION()
 	void TryEmitHit(const FHitResult& Hit) const;
+
+	UFUNCTION()
+	void DrawTracesInPersona();
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 };
